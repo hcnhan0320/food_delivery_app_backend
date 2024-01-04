@@ -5,7 +5,13 @@ module.exports = {
       connectionUrl: config.mongoConnectionUrl,
       database: 'food_delivery_db',
       collections: {
+         CATEGORIES: 'categories',
          USERS: 'users',
+         RESTAURENTS: 'restaurants',
+         CARTS: 'carts',
+         TOURS: 'tours',
+         FAVORITES: 'favorites',
+         BOOKING: 'booking',
       },
    },
    serverConfig: {

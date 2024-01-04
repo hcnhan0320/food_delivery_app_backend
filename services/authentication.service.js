@@ -2,26 +2,39 @@ const MongoDb = require('./mongodb.service');
 const { mongoConfig, tokenSecret } = require('../config');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const config = require('../config');
+const { User } = require('../model/userModel');
 
 const userRegister = async (user) => {
    try {
-      if (!user?.username || !user?.email || !user?.password)
+      if (
+         !user?.username ||
+         !user?.email ||
+         !user?.password ||
+         !user?.fullname ||
+         !user?.phoneNum ||
+         !user?.city
+      )
          return { status: false, message: 'Please fill up all fields' };
 
       const passwordHash = await bcrypt.hash(user?.password, 10);
 
-      let userObj = {
+      let userObj = new User({
          username: user?.username,
          email: user?.email,
          password: passwordHash,
-      };
+         fullname: user?.fullname,
+         phoneNum: user?.phoneNum,
+         city: user?.city,
+         role: user?.role,
+      });
       let savedUser = await MongoDb.db
          .collection(mongoConfig.collections.USERS)
          .insertOne(userObj);
 
       if (savedUser?.acknowledged && savedUser?.insertedId) {
          let token = jwt.sign(
-            { username: userObj?.username, email: userObj?.email },
+            { username: userObj?.usernname, email: userObj?.email },
             tokenSecret,
             { expiresIn: '24h' }
          );
@@ -36,7 +49,6 @@ const userRegister = async (user) => {
             message: 'User registered failed',
          };
       }
-      console.log(savedUser);
    } catch (error) {
       console.log(error);
       let errorMessage = 'User registered failed';
@@ -69,7 +81,11 @@ const userLogin = async (user) => {
          );
          if (isPasswordVerified) {
             let token = jwt.sign(
-               { username: userObj?.username, email: userObj?.email },
+               {
+                  username: userObj?.username,
+                  email: userObj?.email,
+                  role: userObj?.role,
+               },
                tokenSecret,
                { expiresIn: '24h' }
             );
@@ -100,4 +116,130 @@ const userLogin = async (user) => {
    }
 };
 
-module.exports = { userRegister, userLogin };
+const checkUserExist = async (query) => {
+   let messages = {
+      email: 'User already exist',
+      username: 'This username is taken',
+   };
+
+   try {
+      let queryType = Object.keys(query)[0];
+      let userObj = await MongoDb.db
+         .collection(mongoConfig.collections.USERS)
+         .findOne(query);
+      console.log(userObj);
+      return !userObj
+         ? { status: true, message: `This ${queryType} is not taken` }
+         : { status: false, message: messages[queryType] };
+   } catch (error) {}
+};
+
+const tokenVerification = async (req, res, next) => {
+   console.log(
+      `authentication.service | tokenVerification | ${req?.originalUrl}`
+   );
+   try {
+      if (
+         req?.originalUrl.endsWith('/login') ||
+         req?.originalUrl.endsWith('/user-exist') ||
+         req?.originalUrl.endsWith('/register') ||
+         req?.originalUrl.endsWith('/refresh-token') ||
+         req?.originalUrl.endsWith('/api/tour') ||
+         req?.originalUrl.endsWith('/api/search')
+      )
+         return next();
+      let token = req?.headers['authorization'];
+      if (token && token.startsWith('Bearer ')) {
+         token = token.slice(7, token?.length);
+         jwt.verify(token, config.tokenSecret, (error, decoded) => {
+            if (error) {
+               res.status(401).json({
+                  status: false,
+                  message: error?.name ? error?.name : 'Invalid Token',
+                  error: `Invalid token | ${error?.message}`,
+               });
+            } else {
+               req['username'] = decoded?.username;
+               next();
+            }
+         });
+      } else {
+         res.status(401).json({
+            status: false,
+            message: 'Token is missing',
+            error: 'Token is missing',
+         });
+      }
+   } catch (error) {
+      res.status(401).json({
+         status: false,
+         message: error?.message ? error?.message : 'Authentication failed',
+         error: `Authentication failed | ${error?.message}`,
+      });
+   }
+};
+
+const tokenRefresh = async (req, res) => {
+   console.log(
+      `authentication.service | tokenVerification | ${req?.originalUrl}`
+   );
+   try {
+      let token = req?.headers['authorization'];
+      if (token && token.startsWith('Bearer ')) {
+         token = token.slice(7, token?.length);
+         jwt.verify(
+            token,
+            config.tokenSecret,
+            { ignoreExpiration: true },
+            (error, decoded) => {
+               if (error) {
+                  res.status(401).json({
+                     status: false,
+                     message: error?.name ? error?.name : 'Invalid Token',
+                     error: `Invalid token | ${error?.message}`,
+                  });
+               } else {
+                  if (decoded?.username && decoded?.email) {
+                     let newToken = jwt.sign(
+                        { username: decoded?.username, email: decoded?.email },
+                        tokenSecret,
+                        { expiresIn: '24h' }
+                     );
+                     res.json({
+                        status: true,
+                        message: 'Token refresh successfull',
+                        data: newToken,
+                     });
+                  } else {
+                     res.status(401).json({
+                        status: false,
+                        message: error?.name ? error?.name : 'Invalid Token',
+                        error: `Invalid token | ${error?.message}`,
+                     });
+                  }
+               }
+            }
+         );
+      } else {
+         res.status(401).json({
+            status: false,
+            message: error?.name ? error?.name : 'Token missing',
+            error: `Token missing | ${error?.message}`,
+         });
+      }
+   } catch (error) {
+      res.status(401).json({
+         status: false,
+         message: error?.name ? error?.name : 'Token refresh failed',
+         error: `Token refresh failed | ${error?.message}`,
+      });
+   }
+};
+
+module.exports = {
+   userRegister,
+   userLogin,
+   checkUserExist,
+   tokenVerification,
+   tokenRefresh,
+};
